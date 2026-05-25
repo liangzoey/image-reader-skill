@@ -1,97 +1,101 @@
-# Image Reader Skill for Claude Code / Claude Code 图片阅读技能
+<div align="right">
+  <b>English</b> | <a href="README.zh.md">中文</a>
+</div>
 
-一个本地运行的图片分析技能，让 [Claude Code](https://claude.ai/code) 能够通过 OCR（EasyOCR + OpenCV）和可选的 Janus-Pro 多模态 VLM 读取图片内容——全部在本地运行，无需联网。
+# Image Reader Skill for Claude Code
 
-Claude Code 的模型（如 deepseek-v4-flash、Claude Opus 等）无法直接处理图片。这个技能通过在本地运行 Python 分析脚本，将图片的结构化信息和文本内容返回给 Claude，填补了这一空白。
+A local image analysis skill for [Claude Code](https://claude.ai/code) that enables image reading capabilities via OCR (EasyOCR + OpenCV) and optionally Janus-Pro multimodal VLM — all running locally on your machine.
 
----
-
-## 功能特点 / Features
-
-- **自动硬件检测** — 自动检测 GPU/VRAM/内存，选择最优分析模式
-- **OCR 文字提取** — EasyOCR 支持中文简体 + 英文
-- **图像结构分析** — OpenCV 4x4 网格分析（亮度、对比度、边缘密度、主色）
-- **图像类型分类** — 启发式分类（截图、文档、照片、UI 等）
-- **Janus-Pro 集成**（可选）— DeepSeek 多模态 VLM，用于深度语义理解
-- **完全本地运行** — 无需云 API，数据不外传
+Claude Code models (like deepseek-v4-flash, Claude Opus, etc.) cannot directly process images. This skill bridges that gap by running Python-based analysis locally and returning structured results.
 
 ---
 
-## 硬件要求 / Hardware Requirements
+## Features
 
-| 模式 / Mode | 显存 / VRAM | GPU | 内存 / RAM |
-|-------------|-------------|-----|-----------|
-| 仅 OCR / OCR only | 任意 | 可选 | 任意 |
-| Janus-Pro-1B (CPU) | 无 | 否 | >=16GB |
-| Janus-Pro-1B (GPU) | >=4GB | 是 | 任意 |
-| Janus-Pro-7B (4-bit) | >=8GB | 是 | 任意 |
-| Janus-Pro-7B (FP16) | >=14GB | 是 | 任意 |
-
-每次运行时自动检测硬件并选择最佳模式。
+- **Automatic Hardware Detection** — Detects GPU/VRAM/RAM and picks the best available analysis mode
+- **OCR Text Extraction** — EasyOCR with Chinese (Simplified) + English support
+- **Structural Image Analysis** — OpenCV-based 4x4 grid analysis (brightness, contrast, edge density, dominant colors)
+- **Image Type Classification** — Heuristic classification (screenshot, document, photo, UI, etc.)
+- **Janus-Pro Integration** (optional) — DeepSeek's multimodal VLM for deep semantic image understanding
+- **No Cloud API Needed** — Everything runs locally, no data leaves your machine
 
 ---
 
-## 快速开始 / Quick Start
+## Hardware Requirements
 
-### 1. 安装依赖 / Install Dependencies
+| Mode | VRAM | GPU | RAM |
+|------|------|-----|-----|
+| OCR only | Any | Optional | Any |
+| Janus-Pro-1B (CPU) | N/A | No | >=16GB |
+| Janus-Pro-1B (GPU) | >=4GB | Yes | Any |
+| Janus-Pro-7B (4-bit) | >=8GB | Yes | Any |
+| Janus-Pro-7B (FP16) | >=14GB | Yes | Any |
+
+Auto-detection selects the best mode on each run.
+
+---
+
+## Quick Start
+
+### 1. Install Dependencies
 
 ```bash
 pip install torch torchvision easyocr opencv-python-headless pillow
 ```
 
-如果需要 Janus-Pro（可选，用于深度理解图片内容）：
+For Janus-Pro (optional, for deep image understanding):
 
 ```bash
 pip install transformers timm attrdict
 ```
 
-### 2. 快速测试 / Quick Test
+### 2. Quick Test
 
 ```bash
-python scripts/ocr_image.py "你的图片路径.png"
+python scripts/ocr_image.py "path/to/your/image.png"
 ```
 
-返回 JSON 格式的 OCR 文字、结构布局和图像分类信息。
+Returns JSON with OCR text, structural layout, and image classification.
 
-### 3. 全功能分析 / Full Analysis (OCR + 可选 Janus)
+### 3. Full Analysis (OCR + optional Janus)
 
 ```bash
-python scripts/analyze.py "你的图片路径.png"
+python scripts/analyze.py "path/to/your/image.png"
 ```
 
-先自动检测硬件，然后自动选择最佳模式进行分析。
+Hardware auto-detection runs first, selecting the best mode automatically.
 
 ---
 
-## 使用方式 / Usage
+## Usage
 
-### 基础 OCR + 结构分析 / Basic OCR + Structural Analysis
+### Basic OCR + Structural Analysis
 
 ```bash
 python scripts/ocr_image.py "image.png"
 ```
 
-输出：检测到的文字、4x4 网格分析、尺寸、颜色、图片类型。
+Output: JSON with detected text, 4x4 grid analysis, dimensions, colors, image type.
 
-### 一键全分析 / All-in-One (Auto-Detect + OCR + Janus)
+### All-in-One (Auto-Detect + OCR + Janus)
 
 ```bash
 python scripts/analyze.py "image.png"
 ```
 
-硬件检测 → OCR（始终运行）→ Janus-Pro（如果显存/内存足够且模型已缓存）
+Hardware detection → OCR (always runs) → Janus-Pro (if VRAM/RAM sufficient + model cached)
 
-### 强制使用 Janus 模式 / Force Janus Mode
+### Force Janus Mode
 
 ```bash
-# 使用 7B 模型（需要 ~14GB 显存）
+# Use the 7B model (requires ~14GB VRAM)
 python scripts/analyze.py "image.png" --mode janus
 
-# 使用 1B 模型（需要 ~4GB 显存或 ~16GB 内存）
+# Use the 1B model (requires ~4GB VRAM or ~16GB RAM)
 python scripts/analyze.py "image.png" --mode janus --use-small
 ```
 
-### 仅查看硬件信息 / Hardware Info Only
+### Hardware Info Only
 
 ```bash
 python scripts/auto_detect.py
@@ -99,45 +103,45 @@ python scripts/auto_detect.py
 
 ---
 
-## 安装为 Claude Code 技能 / Installing as a Claude Code Skill
+## Installing as a Claude Code Skill
 
-1. 将 `image-reader` 文件夹放入 `~/.claude/skills/` 目录
-2. 重启 Claude Code
-3. 当你在对话中提供图片路径时，Claude 会自动调用此技能
+1. Place the `image-reader` folder in your `~/.claude/skills/` directory
+2. Restart Claude Code
+3. When you provide an image path, Claude will automatically invoke this skill
 
-或者使用打包好的技能文件：
+Or use the packaged skill file:
 
 ```bash
-# .skill 文件可以通过 Claude Code 的技能管理功能安装
+# The .skill file can be installed via Claude Code's skill management
 ```
 
 ---
 
-## 脚本说明 / Scripts Overview
+## Scripts Overview
 
-| 脚本 / Script | 功能 / Purpose |
-|---------------|----------------|
-| `scripts/analyze.py` | 主入口 — 自动检测硬件，运行 OCR + 可选 Janus |
-| `scripts/ocr_image.py` | EasyOCR 文字提取 + OpenCV 结构分析 |
-| `scripts/janus_analyze.py` | Janus-Pro-7B/1B 深度图片理解 |
-| `scripts/auto_detect.py` | 独立的硬件检测（GPU、显存、内存） |
+| Script | Purpose |
+|--------|---------|
+| `scripts/analyze.py` | Main entry point — auto-detects hardware, runs OCR + optional Janus |
+| `scripts/ocr_image.py` | EasyOCR text extraction + OpenCV structural analysis |
+| `scripts/janus_analyze.py` | Janus-Pro-7B/1B deep image understanding |
+| `scripts/auto_detect.py` | Standalone hardware detection (GPU, VRAM, RAM) |
 
 ---
 
-## Janus-Pro 配置（可选）/ Janus-Pro Setup (Optional)
+## Janus-Pro Setup (Optional)
 
-Janus-Pro 模型会在首次使用时自动从 HuggingFace 下载：
+Janus-Pro models are downloaded automatically from HuggingFace on first use:
 
-- **Janus-Pro-7B**: ~15GB 下载 ([deepseek-ai/Janus-Pro-7B](https://huggingface.co/deepseek-ai/Janus-Pro-7B))
-- **Janus-Pro-1B**: ~2GB 下载 ([deepseek-ai/Janus-Pro-1B](https://huggingface.co/deepseek-ai/Janus-Pro-1B))
+- **Janus-Pro-7B**: ~15GB download ([deepseek-ai/Janus-Pro-7B](https://huggingface.co/deepseek-ai/Janus-Pro-7B))
+- **Janus-Pro-1B**: ~2GB download ([deepseek-ai/Janus-Pro-1B](https://huggingface.co/deepseek-ai/Janus-Pro-1B))
 
-预下载命令：
+To pre-download:
 
 ```bash
 python -c "from huggingface_hub import snapshot_download; snapshot_download('deepseek-ai/Janus-Pro-7B')"
 ```
 
-或者使用本地模型目录：
+Or use a local model directory:
 
 ```bash
 python scripts/analyze.py "image.png" --model-path "F:/ComfyUIClassic/ComfyUIClassic/models/Janus-Pro"
@@ -145,9 +149,9 @@ python scripts/analyze.py "image.png" --model-path "F:/ComfyUIClassic/ComfyUICla
 
 ---
 
-## 输出格式 / Output Format
+## Output Format
 
-### OCR + 结构输出 / OCR + Structure Output
+### OCR + Structure Output
 
 ```json
 {
@@ -165,7 +169,7 @@ python scripts/analyze.py "image.png" --model-path "F:/ComfyUIClassic/ComfyUICla
 }
 ```
 
-### 全分析输出 / Full Analysis Output
+### Full Analysis Output
 
 ```json
 {
@@ -174,23 +178,23 @@ python scripts/analyze.py "image.png" --model-path "F:/ComfyUIClassic/ComfyUICla
   "mode_used": "janus",
   "ocr_text": [...],
   "structure": {...},
-  "description": "这是一张截图，显示...",
+  "description": "This is a screenshot showing...",
   "total_time_s": 12.3
 }
 ```
 
 ---
 
-## 技术细节 / Technical Details
+## Technical Details
 
-- **OCR 引擎**: EasyOCR（CRNN + CTC 解码器），支持 ["ch_sim", "en"] 语言
-- **预处理**: 3 倍放大 + 4 种预处理（原图、灰度、Otsu、反转 Otsu）
-- **网格分析**: 4x4 区域分解，每单元格亮度、对比度、边缘密度、主色
-- **图像分类**: 基于边缘密度、亮度方差和对比度的启发式算法
-- **VLM**: Janus-Pro（SigLIP 视觉编码器 + Llama 语言模型），直接通过 `from_pretrained` 导入
+- **OCR Engine**: EasyOCR (CRNN + CTC decoder) with ["ch_sim", "en"] languages
+- **Preprocessing**: 3x upscale + 4 variants (original, grayscale, Otsu, inverted Otsu)
+- **Grid Analysis**: 4x4 region breakdown with per-cell brightness, contrast, edge density, dominant color
+- **Image Classification**: Heuristics based on edge density, brightness variance, and contrast
+- **VLM**: Janus-Pro (SigLIP vision encoder + Llama language model) via direct `from_pretrained` import
 
 ---
 
-## 许可 / License
+## License
 
 MIT
