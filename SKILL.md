@@ -14,6 +14,19 @@ description: >
 
 ## Main Entry Point
 
+**Safety: Always check hardware first before downloading any model.**
+Run auto_detect first to verify VRAM/RAM:
+```
+python scripts/auto_detect.py 2>$null
+```
+- If VRAM < 4GB: only OCR mode, no VLM model downloads allowed
+- If VRAM < 8GB: only Janus-Pro-1B, no 7B or Qwen downloads allowed
+- If VRAM < 12GB: only small Qwen (7B/14B) allowed, no 27B/32B downloads
+- If VRAM >= 12GB: Janus-Pro-7B or Qwen3.5-27B OK
+- If no GPU + RAM < 16GB: no VLM at all, OCR only
+
+**Never download a model that exceeds available VRAM/RAM** — it will freeze the computer.
+
 For images:
 ```
 python scripts/analyze.py <image_path> [prompt] 2>$null
@@ -145,11 +158,33 @@ python scripts/analyze.py "video.mp4" --mode qwen
 ## Examples
 
 User provides image path:
-1. Run `python scripts/analyze.py "C:\path\to\image.png" 2>$null`
-2. Parse JSON: hardware info, OCR text, structure grid, VLM description
-3. Present merged summary to the user
+1. Run `python scripts/auto_detect.py 2>$null` to check hardware safety
+2. If VRAM/RAM insufficient for any VLM (Janus/Qwen), refuse and use OCR only:
+   - Janus-Pro-7B needs >=14GB VRAM, Janus-Pro-1B needs >=4GB VRAM or >=16GB RAM (CPU)
+   - Qwen 27B needs >=12GB VRAM, Qwen 7B needs >=6GB VRAM (GPU) or >=16GB RAM (CPU)
+3. If VRAM sufficient: run `python scripts/analyze.py "C:\path\to\image.png" 2>$null`
+4. Parse JSON: hardware info, OCR text, structure grid, VLM description
+5. Present merged summary to the user
 
 User provides video path (Qwen GGUF set up):
-1. Run `python scripts/analyze.py "C:\path\to\video.mp4" --mode qwen 2>$null`
-2. Parse JSON: hardware info, video frames analyses, summary
-3. Present video content summary to the user
+1. Run `python scripts/auto_detect.py 2>$null` to check Qwen availability
+2. Only proceed if enough VRAM/RAM for Qwen GGUF model:
+   - Qwen 27B Q4_K_M (~16.7GB): needs >=12GB VRAM (GPU) or >=32GB RAM (CPU)
+   - Qwen 27B Q4_K_S (~14.7GB): needs >=12GB VRAM
+   - Qwen 7B: needs >=6GB VRAM
+3. Run `python scripts/analyze.py "C:\path\to\video.mp4" --mode qwen 2>$null`
+4. Parse JSON: hardware info, video frames analyses, summary
+5. Present video content summary to the user
+
+## Hardware Safety Rules
+
+Never attempt to download or run a model that exceeds available VRAM or RAM:
+
+| Model | Min VRAM (GPU) | Min RAM (CPU) | Refuse if below |
+|-------|---------------|--------------|-----------------|
+| Janus-Pro-7B | 14 GB | N/A | VRAM < 14 GB |
+| Janus-Pro-1B | 4 GB | 16 GB | VRAM < 4 GB && RAM < 16 GB |
+| Qwen3.5-27B Q4 | 12 GB | 32 GB | VRAM < 12 GB && RAM < 32 GB |
+| Qwen2.5-7B Q4 | 6 GB | 16 GB | VRAM < 6 GB && RAM < 16 GB |
+
+**Refuse download if**: available VRAM < model's minimum VRAM requirement AND available RAM < model's minimum RAM requirement. Don't let the user's computer freeze.

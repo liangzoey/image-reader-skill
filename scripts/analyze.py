@@ -48,6 +48,37 @@ def check_model_cached(model_id):
     return False
 
 
+# Minimum hardware requirements (GB)
+_HW_REQUIREMENTS = {
+    "janus_7b": {"vram": 14, "ram": 0},     # Janus-Pro-7B FP16
+    "janus_1b": {"vram": 4, "ram": 16},     # Janus-Pro-1B
+    "qwen_27b": {"vram": 12, "ram": 32},    # Qwen3.5-27B GGUF
+    "qwen_14b": {"vram": 8, "ram": 20},     # Qwen2.5-14B GGUF
+    "qwen_7b":  {"vram": 6, "ram": 16},     # Qwen2.5-7B GGUF
+}
+
+
+def _hw_safe(hw, model_key):
+    """Check if hardware meets minimum requirements for a model.
+    Returns True if safe, False if should refuse."""
+    vram = hw.get("vram_total_gb") or 0
+    ram = hw.get("ram_total_gb") or 0
+    req = _HW_REQUIREMENTS.get(model_key)
+    if not req:
+        return False
+    # GPU path: check VRAM
+    if hw.get("cuda_available") and vram >= req["vram"]:
+        return True
+    # CPU path: check RAM
+    if not hw.get("cuda_available") and ram >= req["ram"]:
+        return True
+    # GPU but VRAM insufficient
+    if hw.get("cuda_available") and vram < req["vram"]:
+        return False
+    # No GPU and RAM insufficient
+    return False
+
+
 def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small=False,
             qwen_model_path=None, video_mode=None, video_fps=1.0, video_max_frames=30):
     t0 = time.time()
@@ -65,6 +96,10 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
         "video_info": None,
         "error": None,
     }
+
+    vram = hw.get("vram_total_gb") or 0
+    ram = hw.get("ram_total_gb") or 0
+    cuda = hw.get("cuda_available", False)
 
     # -- Always run OCR for images (skip for video) --
     if not is_vid:
@@ -91,6 +126,17 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
 
     # -- Run Qwen mode (images + video) --
     if selected_mode == "qwen":
+        # Safety check: refuse if hardware can't handle it
+        qwen_safe = _hw_safe(hw, "qwen_27b") or _hw_safe(hw, "qwen_14b") or _hw_safe(hw, "qwen_7b")
+        if not qwen_safe:
+            result["error"] = (
+                f"Safety: insufficient hardware for Qwen GGUF model. "
+                f"VRAM: {vram}GB, RAM: {ram}GB, CUDA: {cuda}. "
+                f"Need >=12GB VRAM (GPU) or >=32GB RAM (CPU). Refusing to download."
+            )
+            result["mode_used"] = "refused"
+            result["total_time_s"] = round(time.time() - t0, 1)
+            return result
         try:
             from qwen_analyze import analyze_media as qwen_analyze
             q_result = qwen_analyze(
@@ -112,6 +158,19 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
     # -- Run Janus mode (images only, lightweight) --
     elif selected_mode == "janus" and not is_vid:
         janus_model_id = model_path or (MODEL_1B if use_small else MODEL_7B)
+        # Safety check: refuse if hardware can't handle Janus
+        is_7b = "7B" in janus_model_id
+        janus_safe = _hw_safe(hw, "janus_7b") if is_7b else _hw_safe(hw, "janus_1b")
+        if not janus_safe:
+            result["error"] = (
+                f"Safety: insufficient hardware for Janus-{'7B' if is_7b else '1B'}. "
+                f"VRAM: {vram}GB, RAM: {ram}GB, CUDA: {cuda}. "
+                f"Need {'>=14GB VRAM (GPU)' if is_7b else '>=4GB VRAM or >=16GB RAM'}. "
+                f"Refusing to download."
+            )
+            result["mode_used"] = "refused"
+            result["total_time_s"] = round(time.time() - t0, 1)
+            return result
         janus_available = check_model_cached(janus_model_id) if not model_path else True
 
         if janus_available or (model_path and os.path.exists(model_path)):

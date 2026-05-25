@@ -475,6 +475,28 @@ def auto_download_model(model_dir=None):
 
     Returns the model directory path if successful, None otherwise.
     """
+    # Safety: refuse download if VRAM/RAM insufficient
+    vram = 0
+    ram = 0
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1)
+    except Exception:
+        pass
+    try:
+        import psutil
+        ram = round(psutil.virtual_memory().total / 1e9, 1)
+    except Exception:
+        pass
+    if vram > 0 and vram < 6 and ram < 16:
+        print(f"  [qwen] SAFETY: VRAM {vram}GB, RAM {ram}GB — too low for Qwen GGUF. "
+              f"Need >=6GB VRAM or >=16GB RAM. Refusing download.", file=sys.stderr)
+        return None
+    if vram > 0 and vram < 12 and ram < 32:
+        # Low VRAM but enough RAM — warn but allow CPU mode
+        print(f"  [qwen] VRAM {vram}GB below 12GB threshold. Qwen will run on CPU (slow).", file=sys.stderr)
+
     # Determine target directory
     if model_dir and os.path.isdir(model_dir):
         target = model_dir
