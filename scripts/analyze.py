@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-All-in-one image analysis: auto-detects hardware, checks model cache, runs best mode.
+All-in-one image/video analysis: auto-detects hardware, runs OCR + VLM analysis.
 
 Usage:
     python analyze.py <image_path> [prompt]
+    python analyze.py <video_path> [prompt] --mode qwen
     python analyze.py <image_path> --mode janus --use-small
+    python analyze.py <path> --mode qwen --qwen-model-path <gguf_dir>
 """
 import sys, os, json, time, logging, warnings
 logging.getLogger().setLevel(logging.ERROR)
@@ -14,7 +16,7 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
 
-from auto_detect import detect
+from auto_detect import detect, is_video_file
 
 MODEL_7B = "deepseek-ai/Janus-Pro-7B"
 MODEL_1B = "deepseek-ai/Janus-Pro-1B"
@@ -29,10 +31,9 @@ def check_model_cached(model_id):
                 revisions = list(repo.revisions)
                 if revisions:
                     total = sum(r.size_on_disk for r in revisions)
-                    return total > 1_000_000_000  # at least 1GB cached
+                    return total > 1_000_000_000
     except ImportError:
         pass
-    # Fallback: check standard HF cache path
     hf_home = os.environ.get("HF_HOME") or os.path.join(os.path.expanduser("~"), ".cache", "huggingface")
     model_path = os.path.join(hf_home, "hub", f"models--{model_id.replace('/', '--')}")
     if os.path.exists(model_path):
@@ -47,36 +48,61 @@ def check_model_cached(model_id):
     return False
 
 
-def analyze(img_path, prompt=None, force_mode=None, model_path=None, use_small=False):
+def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small=False,
+            qwen_model_path=None, video_mode=None, video_fps=1.0, video_max_frames=30):
     t0 = time.time()
-    hw = detect()
+    is_vid = video_mode if video_mode is not None else is_video_file(media_path)
+    hw = detect(model_path_hint=qwen_model_path)
     mode = force_mode or hw["recommended_mode"]
 
     result = {
-        "file": img_path,
+        "file": media_path,
         "hardware": hw,
         "mode_used": mode,
         "ocr_text": None,
         "structure": None,
         "description": None,
+        "video_analysis": None,
+        "video_info": None,
         "error": None,
     }
 
-    # Always run OCR (fast, structural info)
-    try:
-        from ocr_image import analyze_image as ocr_analyze
-        ocr_result = ocr_analyze(img_path)
-        result["ocr_text"] = ocr_result.get("text_found")
-        result["structure"] = ocr_result.get("structure")
-    except Exception as e:
-        result["warning"] = f"OCR skipped: {e}"
+    # Always run OCR for images (skip for video)
+    if not is_vid:
+        try:
+            from ocr_image import analyze_image as ocr_analyze
+            ocr_result = ocr_analyze(media_path)
+            result["ocr_text"] = ocr_result.get("text_found")
+            result["structure"] = ocr_result.get("structure")
+        except Exception as e:
+            result["warning"] = f"OCR skipped: {e}"
 
-    # Run Janus if hardware + model availability allows
-    if mode == "janus" or force_mode == "janus":
+    # Run Qwen mode
+    if mode == "qwen" or force_mode == "qwen":
+        try:
+            from qwen_analyze import analyze_media as qwen_analyze
+            q_result = qwen_analyze(
+                media_path, prompt=prompt,
+                model_dir=qwen_model_path,
+                use_small=use_small,
+                is_video=is_vid,
+                video_fps=video_fps,
+                video_max_frames=video_max_frames,
+            )
+            result["description"] = q_result.get("analysis")
+            result["video_analysis"] = q_result.get("frame_analyses")
+            result["video_info"] = q_result.get("video_info")
+            if q_result.get("error"):
+                result["error"] = q_result["error"]
+        except Exception as e:
+            result["error"] = f"Qwen analysis failed: {e}"
+
+    # Run Janus mode (for images only)
+    elif (mode == "janus" or force_mode == "janus") and not is_vid:
         janus_model_id = model_path or (MODEL_1B if use_small else MODEL_7B)
 
         if model_path and os.path.exists(model_path):
-            pass  # explicit local path
+            pass
         elif not check_model_cached(janus_model_id):
             result["error"] = (
                 f"Model not cached ({janus_model_id}). "
@@ -88,7 +114,7 @@ def analyze(img_path, prompt=None, force_mode=None, model_path=None, use_small=F
 
         try:
             from janus_analyze import analyze_image as janus_analyze
-            j_result = janus_analyze(img_path, prompt=prompt, model_path=model_path, use_small=use_small)
+            j_result = janus_analyze(media_path, prompt=prompt, model_path=model_path, use_small=use_small)
             result["description"] = j_result.get("analysis")
             if j_result.get("error"):
                 result["error"] = j_result["error"]
@@ -101,14 +127,18 @@ def analyze(img_path, prompt=None, force_mode=None, model_path=None, use_small=F
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: analyze.py <image_path> [prompt]"}))
+        print(json.dumps({"error": "Usage: analyze.py <image_or_video_path> [prompt]"}))
         sys.exit(1)
 
-    img_path = sys.argv[1]
+    media_path = sys.argv[1]
     prompt = None
     force_mode = None
     model_path = None
     use_small = False
+    qwen_model_path = None
+    video_mode = None
+    video_fps = 1.0
+    video_max_frames = 30
 
     i = 2
     while i < len(sys.argv):
@@ -118,18 +148,31 @@ if __name__ == "__main__":
         elif sys.argv[i] == "--model-path" and i + 1 < len(sys.argv):
             model_path = sys.argv[i + 1]
             i += 2
+        elif sys.argv[i] == "--qwen-model-path" and i + 1 < len(sys.argv):
+            qwen_model_path = sys.argv[i + 1]
+            i += 2
         elif sys.argv[i] == "--use-small":
             use_small = True
             i += 1
+        elif sys.argv[i] == "--video":
+            video_mode = True
+            i += 1
+        elif sys.argv[i] == "--video-fps" and i + 1 < len(sys.argv):
+            video_fps = float(sys.argv[i + 1])
+            i += 2
+        elif sys.argv[i] == "--video-max-frames" and i + 1 < len(sys.argv):
+            video_max_frames = int(sys.argv[i + 1])
+            i += 2
         elif not sys.argv[i].startswith("--"):
             prompt = sys.argv[i]
             i += 1
         else:
             i += 1
 
-    if not os.path.exists(img_path):
-        print(json.dumps({"error": f"Image not found: {img_path}"}))
+    if not os.path.exists(media_path):
+        print(json.dumps({"error": f"File not found: {media_path}"}))
         sys.exit(1)
 
-    result = analyze(img_path, prompt, force_mode, model_path, use_small)
+    result = analyze(media_path, prompt, force_mode, model_path, use_small,
+                     qwen_model_path, video_mode, video_fps, video_max_frames)
     print(json.dumps(result, ensure_ascii=False, indent=2))
