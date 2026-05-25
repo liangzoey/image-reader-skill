@@ -50,24 +50,37 @@ def find_qwen_gguf_files(model_dir):
     mmprojs = [m for m in all_gguf if "mmproj" in os.path.basename(m).lower()]
     models = [m for m in all_gguf if "mmproj" not in os.path.basename(m).lower()]
 
+    # If no mmproj found, VLM won't work
+    if not mmprojs:
+        return []
+
     results = []
     for model_path in models:
         label = os.path.basename(model_path)
-        # Find matching mmproj (same size prefix)
-        model_base = os.path.splitext(os.path.basename(model_path))[0].lower()
         matched_mmproj = None
+
+        # Strategy 1: match by shared size number (e.g., "27B" in model name + mmproj name)
+        model_base = os.path.splitext(os.path.basename(model_path))[0].lower()
         for mp in mmprojs:
             mp_base = os.path.splitext(os.path.basename(mp))[0].lower()
-            # Match by shared prefix numbers (e.g., "7B" in both names)
-            import re
             model_nums = set(re.findall(r'(\d+)[bB]', model_base))
             mp_nums = set(re.findall(r'(\d+)[bB]', mp_base))
             if model_nums & mp_nums:
                 matched_mmproj = mp
                 break
+
+        # Strategy 2: fallback — pick first mmproj (handles models like Qwen3.5-27B
+        # where mmproj is named mmproj-F16.gguf with no model size in name)
+        if matched_mmproj is None and mmprojs:
+            matched_mmproj = mmprojs[0]
+
         if matched_mmproj:
             size_b = parse_model_size(label)
             results.append((model_path, matched_mmproj, label, size_b))
+
+    # Sort by model size descending (largest model first)
+    results.sort(key=lambda x: x[3], reverse=True)
+    return results
 
     # Sort by model size descending (largest model first)
     results.sort(key=lambda x: x[3], reverse=True)

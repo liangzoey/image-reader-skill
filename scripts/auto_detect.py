@@ -119,22 +119,22 @@ def detect(model_path_hint=None):
     # Qwen gets priority if GGUF model is available (it's local and handles video)
     if info["qwen_available"]:
         largest = qwen.get("largest_size", 0)
-        if largest >= 30 and vram >= 12:
+        if largest >= 25 and vram >= 12:
             info["recommended_mode"] = "qwen"
             info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+            info["recommendation"] = f"Qwen3.5-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
         elif largest >= 13 and vram >= 8:
             info["recommended_mode"] = "qwen"
             info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+            info["recommendation"] = f"Qwen-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
         elif largest >= 6 and vram >= 6:
             info["recommended_mode"] = "qwen"
             info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+            info["recommendation"] = f"Qwen-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
         elif largest >= 6 and ram >= 16:
             info["recommended_mode"] = "qwen"
             info["recommended_model"] = f"{largest}b_cpu"
-            info["recommendation"] = f"Qwen2.5-VL-{largest}B on CPU (GGUF, {ram}GB RAM) — supports images + video"
+            info["recommendation"] = f"Qwen-{largest}B on CPU (GGUF, {ram}GB RAM) — supports images + video"
         else:
             info["qwen_available"] = False
             info["qwen_info"] = None

@@ -30,9 +30,9 @@ Auto-detects hardware and runs the best available mode.
 
 | Condition | Mode |
 |-----------|------|
-| Qwen GGUF found (32B/27B) + >=12GB VRAM | Qwen2.5-VL-32B (GGUF) — images + video |
-| Qwen GGUF found (14B) + >=8GB VRAM | Qwen2.5-VL-14B (GGUF) — images + video |
-| Qwen GGUF found (7B/8B) + >=6GB VRAM | Qwen2.5-VL-7B (GGUF) — images + video |
+| Qwen GGUF found (27B-32B) + >=12GB VRAM | Qwen3.5-27B (GGUF) — images + video |
+| Qwen GGUF found (14B) + >=8GB VRAM | Qwen GGUF 14B — images + video |
+| Qwen GGUF found (7B/8B) + >=6GB VRAM | Qwen GGUF 7B — images + video |
 | Qwen GGUF found + >=16GB RAM (no GPU) | Qwen on CPU (GGUF) — images + video |
 | >=14GB VRAM (no Qwen GGUF) | Janus-Pro-7B (FP16) |
 | >=8GB VRAM (no Qwen GGUF) | Janus-Pro-7B (4-bit) or 1B fallback |
@@ -58,11 +58,12 @@ Model cache is checked before loading. If not cached, returns a download command
   - `--video-max-frames 30` : max frames to process
 
 ### `scripts/qwen_analyze.py`
-- Qwen2.5-VL GGUF model support (7B/14B/32B/72B) via llama-cpp-python
+- Qwen GGUF model support (7B/14B/27B/32B/72B) via llama-cpp-python
+- Tested with Qwen3.5-27B from unsloth (GGUF Q4_K_M ~16.7GB)
 - Image analysis with detailed description
 - Video analysis: frame extraction (OpenCV) + frame-by-frame VLM + summary
 - Auto-picks best model size for available VRAM
-- `--use-small` : prefer smallest model (e.g., 7B over 32B)
+- `--use-small` : prefer smallest model (e.g., 7B over 27B)
 - `--model-path <dir>` : GGUF model directory
 - `--video` : video mode
 - Environment: `QWEN_MODEL_PATH`, `QWEN_GPU_LAYERS` (default: -1 = all), `QWEN_CTX_SIZE`
@@ -96,8 +97,9 @@ $env:CMAKE_ARGS="-DGGML_CUDA=ON"
 pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
-2. Download Qwen2.5-VL GGUF model files from HuggingFace (e.g., bartowski):
-   - Any size: 7B, 14B, 32B, 72B — each needs main GGUF + mmproj GGUF
+2. Download Qwen GGUF model files from HuggingFace (e.g., unsloth/Qwen3.5-27B-GGUF):
+   - Main GGUF file (e.g., `Qwen3.5-27B-Q4_K_M.gguf` ~16.7GB for RTX 4090)
+   - mmproj file (e.g., `mmproj-F16.gguf` ~928MB)
 
 3. Set env var or use `--qwen-model-path`:
 ```
