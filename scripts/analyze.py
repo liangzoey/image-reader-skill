@@ -53,12 +53,11 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
     t0 = time.time()
     is_vid = video_mode if video_mode is not None else is_video_file(media_path)
     hw = detect(model_path_hint=qwen_model_path)
-    mode = force_mode or hw["recommended_mode"]
 
     result = {
         "file": media_path,
         "hardware": hw,
-        "mode_used": mode,
+        "mode_used": None,
         "ocr_text": None,
         "structure": None,
         "description": None,
@@ -67,7 +66,7 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
         "error": None,
     }
 
-    # Always run OCR for images (skip for video)
+    # -- Always run OCR for images (skip for video) --
     if not is_vid:
         try:
             from ocr_image import analyze_image as ocr_analyze
@@ -77,8 +76,21 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
         except Exception as e:
             result["warning"] = f"OCR skipped: {e}"
 
-    # Run Qwen mode
-    if mode == "qwen" or force_mode == "qwen":
+    # -- Determine mode priority --
+    # Forced mode always wins
+    if force_mode:
+        selected_mode = force_mode
+    elif is_vid:
+        # Video: Qwen is the only option
+        selected_mode = hw.get("recommended_video_mode", "ocr")
+    else:
+        # Image: Janus first (lightweight), Qwen as fallback
+        selected_mode = hw.get("recommended_image_mode", "ocr")
+
+    result["mode_used"] = selected_mode
+
+    # -- Run Qwen mode (images + video) --
+    if selected_mode == "qwen":
         try:
             from qwen_analyze import analyze_media as qwen_analyze
             q_result = qwen_analyze(
@@ -97,29 +109,54 @@ def analyze(media_path, prompt=None, force_mode=None, model_path=None, use_small
         except Exception as e:
             result["error"] = f"Qwen analysis failed: {e}"
 
-    # Run Janus mode (for images only)
-    elif (mode == "janus" or force_mode == "janus") and not is_vid:
+    # -- Run Janus mode (images only, lightweight) --
+    elif selected_mode == "janus" and not is_vid:
         janus_model_id = model_path or (MODEL_1B if use_small else MODEL_7B)
+        janus_available = check_model_cached(janus_model_id) if not model_path else True
 
-        if model_path and os.path.exists(model_path):
-            pass
-        elif not check_model_cached(janus_model_id):
-            result["error"] = (
-                f"Model not cached ({janus_model_id}). "
-                f"Run this to download it first:\n"
-                f"  python -c \"from huggingface_hub import snapshot_download; snapshot_download('{janus_model_id}')\""
-            )
-            result["total_time_s"] = round(time.time() - t0, 1)
-            return result
-
-        try:
-            from janus_analyze import analyze_image as janus_analyze
-            j_result = janus_analyze(media_path, prompt=prompt, model_path=model_path, use_small=use_small)
-            result["description"] = j_result.get("analysis")
-            if j_result.get("error"):
-                result["error"] = j_result["error"]
-        except Exception as e:
-            result["error"] = f"Janus analysis failed: {e}"
+        if janus_available or (model_path and os.path.exists(model_path)):
+            try:
+                from janus_analyze import analyze_image as janus_analyze
+                j_result = janus_analyze(media_path, prompt=prompt, model_path=model_path, use_small=use_small)
+                result["description"] = j_result.get("analysis")
+                if j_result.get("error"):
+                    result["error"] = j_result["error"]
+            except Exception as e:
+                # Janus failed — try Qwen fallback (if available)
+                if hw.get("qwen_available"):
+                    result["warning"] = f"Janus failed ({e}), falling back to Qwen."
+                    result["mode_used"] = "qwen_fallback"
+                    try:
+                        from qwen_analyze import analyze_media as qwen_analyze
+                        q_result = qwen_analyze(media_path, prompt=prompt, model_dir=qwen_model_path,
+                                                use_small=use_small, is_video=False)
+                        result["description"] = q_result.get("analysis")
+                        if q_result.get("error"):
+                            result["error"] = q_result["error"]
+                    except Exception as e2:
+                        result["error"] = f"Janus failed ({e}), Qwen fallback also failed ({e2})"
+                else:
+                    result["error"] = f"Janus analysis failed: {e}"
+        else:
+            # Janus not cached — try Qwen fallback
+            if hw.get("qwen_available"):
+                result["warning"] = f"Janus model not cached ({janus_model_id}), falling back to Qwen."
+                result["mode_used"] = "qwen_fallback"
+                try:
+                    from qwen_analyze import analyze_media as qwen_analyze
+                    q_result = qwen_analyze(media_path, prompt=prompt, model_dir=qwen_model_path,
+                                            use_small=use_small, is_video=False)
+                    result["description"] = q_result.get("analysis")
+                    if q_result.get("error"):
+                        result["error"] = q_result["error"]
+                except Exception as e:
+                    result["error"] = f"Qwen fallback failed: {e}"
+            else:
+                result["error"] = (
+                    f"Janus model not cached ({janus_model_id}). "
+                    f"Run: python -c \"from huggingface_hub import snapshot_download; "
+                    f"snapshot_download('{janus_model_id}')\""
+                )
 
     result["total_time_s"] = round(time.time() - t0, 1)
     return result

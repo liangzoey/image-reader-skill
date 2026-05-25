@@ -28,17 +28,22 @@ Auto-detects hardware and runs the best available mode.
 
 ## Auto-Detect Logic
 
-| Condition | Mode |
-|-----------|------|
-| Qwen GGUF found (27B-32B) + >=12GB VRAM | Qwen3.5-27B (GGUF) — images + video |
-| Qwen GGUF found (14B) + >=8GB VRAM | Qwen GGUF 14B — images + video |
-| Qwen GGUF found (7B/8B) + >=6GB VRAM | Qwen GGUF 7B — images + video |
-| Qwen GGUF found + >=16GB RAM (no GPU) | Qwen on CPU (GGUF) — images + video |
-| >=14GB VRAM (no Qwen GGUF) | Janus-Pro-7B (FP16) |
-| >=8GB VRAM (no Qwen GGUF) | Janus-Pro-7B (4-bit) or 1B fallback |
-| >=4GB VRAM (no Qwen GGUF) | Janus-Pro-1B |
-| <4GB or no GPU | EasyOCR only |
-| No GPU, >=16GB RAM (no Qwen GGUF) | Janus-Pro-1B on CPU |
+Priority is different for images vs video:
+
+| Condition | Image Mode | Video Mode |
+|-----------|-----------|------------|
+| Qwen GGUF found + >=12GB VRAM | Janus (Qwen fallback) | Qwen3.5-27B |
+| Qwen GGUF found + >=8GB VRAM | Janus (Qwen fallback) | Qwen GGUF 14B |
+| Qwen GGUF found + >=6GB VRAM | Janus (Qwen fallback) | Qwen GGUF 7B |
+| Qwen GGUF found + >=16GB RAM (no GPU) | Janus-1B (Qwen fallback) | Qwen on CPU |
+| >=14GB VRAM (no Qwen GGUF) | Janus-Pro-7B (FP16) | OCR only |
+| >=8GB VRAM (no Qwen GGUF) | Janus-Pro-7B (4-bit) or 1B | OCR only |
+| >=4GB VRAM (no Qwen GGUF) | Janus-Pro-1B | OCR only |
+| <4GB or no GPU | EasyOCR only | OCR only |
+| No GPU, >=16GB RAM (no Qwen GGUF) | Janus-Pro-1B on CPU | OCR only |
+
+For images: Janus is always preferred (lightweight). If Janus unavailable or fails, falls back to Qwen.
+For video: Qwen is required (only option for frame extraction + VLM).
 
 Model cache is checked before loading. If not cached, returns a download command instead of hanging.
 llama-cpp-python is checked for Qwen mode; if missing, recommends running `setup_qwen.py`.

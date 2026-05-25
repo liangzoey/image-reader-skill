@@ -70,6 +70,8 @@ def detect(model_path_hint=None):
         "cuda_available": False,
         "llama_cpp_installed": False,
         "recommended_mode": "ocr",
+        "recommended_image_mode": "ocr",   # lightweight for images (janus preferred)
+        "recommended_video_mode": "ocr",   # for video (qwen required)
         "recommended_model": None,
         "recommendation": None,
         "video_support": False,
@@ -132,65 +134,53 @@ def detect(model_path_hint=None):
     # Check if input is a video file (hint from calling context)
     info["video_support"] = info["qwen_available"]  # Qwen supports video
 
-    # Decide recommendation
+    # Decide recommendation (separate image vs video priority)
     vram = info.get("vram_total_gb") or 0
     ram = info.get("ram_total_gb") or 0
+    qwen_usable = info["qwen_available"] and info["llama_cpp_installed"]
 
-    # Qwen gets priority if GGUF model is available (it's local and handles video)
-    if info["qwen_available"]:
-        largest = qwen.get("largest_size", 0)
-        if not info["llama_cpp_installed"]:
-            # Model found but dependency missing
-            info["recommended_mode"] = "ocr"
-            info["recommendation"] = (
-                f"Qwen GGUF found ({largest}B), but llama-cpp-python not installed.\n"
-                f"Run: python scripts/setup_qwen.py"
-            )
-        elif not info["cuda_available"] and ram >= 16:
-            info["recommended_mode"] = "qwen"
-            info["recommended_model"] = f"{largest}b_cpu"
-            info["recommendation"] = f"Qwen on CPU (GGUF, {ram}GB RAM) — supports images + video (slow)"
-            info["video_support"] = True
-        elif largest >= 25 and vram >= 12:
-            info["recommended_mode"] = "qwen"
-            info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen3.5-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
-        elif largest >= 13 and vram >= 8:
-            info["recommended_mode"] = "qwen"
-            info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
-        elif largest >= 6 and vram >= 6:
-            info["recommended_mode"] = "qwen"
-            info["recommended_model"] = f"{largest}b"
-            info["recommendation"] = f"Qwen-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
-        elif largest >= 6 and ram >= 16:
-            info["recommended_mode"] = "qwen"
-            info["recommended_model"] = f"{largest}b_cpu"
-            info["recommendation"] = f"Qwen-{largest}B on CPU (GGUF, {ram}GB RAM) — supports images + video"
-        else:
-            info["qwen_available"] = False
-            info["qwen_info"] = None
-            info["recommended_mode"] = "ocr"
-            info["recommendation"] = f"Qwen model found but insufficient hardware ({vram}GB VRAM, {ram}GB RAM)"
-    elif info["cuda_available"] and vram >= 14:
-        info["recommended_mode"] = "janus"
+    # ---- Image mode: prefer lightweight Janus, fall back to Qwen ----
+    if info["cuda_available"] and vram >= 14:
+        info["recommended_image_mode"] = "janus"
         info["recommended_model"] = "7b"
-        info["recommendation"] = f"Janus-Pro-7B (FP16, ~{vram}GB VRAM available)"
+        info["recommendation"] = f"Janus-Pro-7B (FP16, ~{vram}GB VRAM)"
+        if qwen_usable:
+            info["recommendation"] += " | Qwen available as fallback"
     elif info["cuda_available"] and vram >= 8:
-        info["recommended_mode"] = "janus"
+        info["recommended_image_mode"] = "janus"
         info["recommended_model"] = "7b_4bit"
         info["recommendation"] = "Janus-Pro-7B (4-bit, needs bitsandbytes)"
+        if qwen_usable:
+            info["recommendation"] += " | Qwen available as fallback"
     elif info["cuda_available"] and vram >= 4:
-        info["recommended_mode"] = "janus"
+        info["recommended_image_mode"] = "janus"
         info["recommended_model"] = "1b"
-        info["recommendation"] = f"Janus-Pro-1B (~{vram}GB VRAM available)"
+        info["recommendation"] = f"Janus-Pro-1B (~{vram}GB VRAM)"
+        if qwen_usable:
+            info["recommendation"] += " | Qwen available as fallback"
+    elif qwen_usable:
+        info["recommended_image_mode"] = "qwen"
+        info["recommended_model"] = "gguf"
+        info["recommendation"] = "Qwen GGUF (on GPU/CPU)"
     elif ram >= 16:
-        info["recommended_mode"] = "janus"
+        info["recommended_image_mode"] = "janus"
         info["recommended_model"] = "1b"
         info["recommendation"] = f"Janus-Pro-1B on CPU (no GPU, {ram}GB RAM)"
     else:
-        info["recommended_mode"] = "ocr"
+        info["recommended_image_mode"] = "ocr"
         info["recommendation"] = f"EasyOCR only (no GPU, {ram}GB RAM)"
+
+    # ---- Video mode: Qwen is the only option ----
+    if qwen_usable:
+        info["recommended_video_mode"] = "qwen"
+        info["video_support"] = True
+    else:
+        info["recommended_video_mode"] = "ocr"
+        reason = "llama-cpp-python not installed" if info["qwen_available"] else "no Qwen GGUF model"
+        info["recommendation"] = f"Video not supported ({reason})"
+
+    # Legacy recommended_mode (for backward compat): image mode
+    info["recommended_mode"] = info["recommended_image_mode"]
 
     return info
 
