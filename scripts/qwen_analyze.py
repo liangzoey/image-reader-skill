@@ -240,6 +240,7 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
         result["video_info"] = video_info
 
     # Check dependencies — auto-install if missing
+    patch_llama_cpp_winmode()  # Fix CUDA DLL loading on Windows
     try:
         from llama_cpp import Llama
     except ImportError:
@@ -253,6 +254,7 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
                 "  pip install llama-cpp-python --force-reinstall --no-cache-dir"
             )
             return result
+        patch_llama_cpp_winmode()  # Fix after fresh install too
         from llama_cpp import Llama
 
     try:
@@ -363,6 +365,48 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
 # Auto-setup: install dependencies and download model without user intervention
 # ---------------------------------------------------------------------------
 
+def patch_llama_cpp_winmode():
+    """Fix llama_cpp winmode issue on Windows.
+
+    The llama_cpp package sets winmode=ctypes.RTLD_GLOBAL when loading llama.dll,
+    which restricts DLL search paths and causes WinError 1920 on CUDA builds.
+    This patches the installed package to use winmode=None instead.
+    """
+    try:
+        import site
+        site_packages = site.getsitepackages()
+        if not site_packages:
+            site_packages = [os.path.dirname(os.path.dirname(os.__file__))]
+        candidates = [os.path.join(sp, "llama_cpp", "_ctypes_extensions.py") for sp in site_packages]
+        if hasattr(site, 'getusersitepackages'):
+            candidates.append(os.path.join(site.getusersitepackages(), "llama_cpp", "_ctypes_extensions.py"))
+
+        ext_path = None
+        for c in candidates:
+            if os.path.exists(c):
+                ext_path = c
+                break
+
+        if ext_path:
+            with open(ext_path, "r") as f:
+                content = f.read()
+            if "cdll_args[\"winmode\"] = ctypes.RTLD_GLOBAL" in content:
+                new = content.replace(
+                    'cdll_args["winmode"] = ctypes.RTLD_GLOBAL',
+                    'cdll_args["winmode"] = None'
+                )
+                with open(ext_path, "w") as f:
+                    f.write(new)
+                print("  [qwen] Patched llama_cpp winmode for CUDA compatibility.", file=sys.stderr)
+
+        # Also add CUDA bin to DLL search path
+        cuda_path = os.environ.get("CUDA_PATH", "")
+        if cuda_path and os.path.isdir(os.path.join(cuda_path, "bin")):
+            os.add_dll_directory(os.path.join(cuda_path, "bin"))
+    except Exception:
+        pass  # Patch is best-effort
+
+
 def auto_install_llama_cpp():
     """Auto-install llama-cpp-python with CUDA or CPU backend based on hardware."""
     import subprocess, sys
@@ -463,13 +507,24 @@ def auto_download_model(model_dir=None):
         if os.path.exists(dest) and os.path.getsize(dest) > 100_000_000:
             print(f"  [qwen] {fname} already exists, skipping.", file=sys.stderr)
             continue
-        print(f"  [qwen] Downloading {fname}...", file=sys.stderr)
-        try:
-            hf_hub_download(repo, fname, local_dir=target, local_dir_use_symlinks=False)
-            print(f"  [qwen] {fname} downloaded.", file=sys.stderr)
-        except Exception as e:
-            print(f"  [qwen] Download failed for {fname}: {e}", file=sys.stderr)
-            return None
+
+        # Retry loop for network issues
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            print(f"  [qwen] Downloading {fname} (attempt {attempt}/{max_retries})...", file=sys.stderr)
+            try:
+                hf_hub_download(repo, fname, local_dir=target, local_dir_use_symlinks=False)
+                size_gb = os.path.getsize(dest) / (1024**3) if os.path.exists(dest) else 0
+                print(f"  [qwen] {fname} downloaded ({size_gb:.1f} GB).", file=sys.stderr)
+                break  # Success
+            except Exception as e:
+                err_str = str(e)
+                if "IncompleteRead" in err_str and attempt < max_retries:
+                    print(f"  [qwen] Connection dropped, retrying in {attempt * 10}s...", file=sys.stderr)
+                    time.sleep(attempt * 10)
+                else:
+                    print(f"  [qwen] Download failed for {fname}: {e}", file=sys.stderr)
+                    return None
 
     print(f"  [qwen] Model ready at: {target}", file=sys.stderr)
     return target

@@ -39,6 +39,7 @@ def check_ram():
     try:
         if os.name == "nt":
             import ctypes
+            kernel32 = ctypes.windll.kernel32
             class MEMORYSTATUSEX(ctypes.Structure):
                 _fields_ = [
                     ("dwLength", ctypes.c_ulong),
@@ -53,7 +54,7 @@ def check_ram():
                 ]
             mem = MEMORYSTATUSEX()
             mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(mem))
+            kernel32.GlobalMemoryStatusEx(ctypes.byref(mem))
             return round(mem.ullTotalPhys / 1e9, 1)
         else:
             import psutil
@@ -173,9 +174,54 @@ def auto_setup(do_install=False):
     return result
 
 
+def patch_llama_cpp_winmode():
+    """Fix llama_cpp winmode issue on Windows for CUDA compatibility.
+
+    The llama_cpp package sets winmode=ctypes.RTLD_GLOBAL which restricts DLL
+    search paths. This patch changes it to winmode=None so CUDA DLLs load correctly.
+    """
+    import site
+    candidates = []
+    for sp in site.getsitepackages():
+        candidates.append(os.path.join(sp, "llama_cpp", "_ctypes_extensions.py"))
+    if hasattr(site, 'getusersitepackages'):
+        candidates.append(os.path.join(site.getusersitepackages(), "llama_cpp", "_ctypes_extensions.py"))
+
+    ext_path = None
+    for c in candidates:
+        if os.path.exists(c):
+            ext_path = c
+            break
+
+    if ext_path:
+        with open(ext_path, "r") as f:
+            content = f.read()
+        if 'cdll_args["winmode"] = ctypes.RTLD_GLOBAL' in content:
+            new = content.replace(
+                'cdll_args["winmode"] = ctypes.RTLD_GLOBAL',
+                'cdll_args["winmode"] = None'
+            )
+            with open(ext_path, "w") as f:
+                f.write(new)
+            print("  [setup] Patched llama_cpp winmode for CUDA compatibility.", file=sys.stderr)
+            return True
+        else:
+            print("  [setup] llama_cpp winmode already patched.", file=sys.stderr)
+            return True
+    else:
+        print("  [setup] llama_cpp _ctypes_extensions.py not found.", file=sys.stderr)
+        return False
+
+
 if __name__ == "__main__":
     do_install = "--install" in sys.argv
     do_check = "--check" in sys.argv
+    do_patch = "--patch" in sys.argv
+
+    # Standalone patch mode
+    if do_patch and not do_install:
+        patch_llama_cpp_winmode()
+        sys.exit(0)
 
     result = auto_setup(do_install=do_install)
 
@@ -199,9 +245,17 @@ if __name__ == "__main__":
     print(f"\n Result:    {'Compatible' if result['compatible'] else 'Incompatible'}")
     print(f"\n {result['message']}")
 
+    # Auto-patch after install
+    if do_install and llama["installed"]:
+        patch_llama_cpp_winmode()
+
     if result["compatible"]:
         if not llama["installed"]:
             print(f"\n-- Install command --\n{result['install_command']}\n")
+        else:
+            # Always ensure winmode is patched
+            patch_llama_cpp_winmode()
+
         print(f"\n-- Model Download --\n{result['download_hint']}\n")
 
         if cuda["available"] and cuda["vram_gb"] >= 12:

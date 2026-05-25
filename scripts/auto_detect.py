@@ -95,10 +95,22 @@ def detect(model_path_hint=None):
         if os.name == "nt":
             import ctypes
             kernel32 = ctypes.windll.kernel32
-            mem = ctypes.c_longlong()
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            mem = MEMORYSTATUSEX()
+            mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
             kernel32.GlobalMemoryStatusEx(ctypes.byref(mem))
-            # MEMORYSTATUSEX structure: dwLength, dwMemoryLoad, ullTotalPhys, ...
-            info["ram_total_gb"] = round(mem / 1e9, 1)
+            info["ram_total_gb"] = round(mem.ullTotalPhys / 1e9, 1)
         else:
             import psutil
             info["ram_total_gb"] = round(psutil.virtual_memory().total / 1e9, 1)
