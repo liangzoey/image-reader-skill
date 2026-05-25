@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Model cache (user-specific)
+*.safetensors
+*.bin
+.huggingface/
+
+# OS
+.DS_Store
+Thumbs.db
