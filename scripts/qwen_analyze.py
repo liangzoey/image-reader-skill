@@ -206,13 +206,19 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
 
     model_path, mmproj_path, model_label = pick_best_model(model_dir, prefer_small=use_small, vram_gb=vram_gb)
     if not model_path:
+        # Auto-download model
+        print("  [qwen] No GGUF model found. Auto-downloading Qwen3.5-27B...", file=sys.stderr)
+        model_dir = auto_download_model(model_dir)
+        if model_dir:
+            model_path, mmproj_path, model_label = pick_best_model(model_dir, prefer_small=use_small, vram_gb=vram_gb)
+
+    if not model_path:
         result["error"] = (
-            "No Qwen GGUF model found.\n"
-            "Set QWEN_MODEL_PATH or use --model-path with a directory containing:\n"
-            "  - Main GGUF model file (e.g., *qwen*.gguf)\n"
-            "  - Multimodal projection file (e.g., *mmproj*.gguf)\n\n"
-            "Download from: https://huggingface.co/bartowski\n\n"
-            "Supports all Qwen2.5-VL sizes (7B, 14B, 32B, 72B) in GGUF format."
+            "No Qwen GGUF model found and auto-download failed.\n"
+            "You can manually download from: https://huggingface.co/unsloth/Qwen3.5-27B-GGUF\n"
+            "  - Qwen3.5-27B-Q4_K_M.gguf\n"
+            "  - mmproj-F16.gguf\n"
+            "Then set: $env:QWEN_MODEL_PATH = \"your\\path\""
         )
         return result
 
@@ -233,56 +239,21 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
             return result
         result["video_info"] = video_info
 
-    # Check dependencies with hardware-aware guidance
+    # Check dependencies — auto-install if missing
     try:
         from llama_cpp import Llama
     except ImportError:
-        # Auto-detect hardware for tailored install instructions
-        try:
-            import torch
-            cuda_avail = torch.cuda.is_available()
-            vram = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if cuda_avail else 0
-        except Exception:
-            cuda_avail = False
-            vram = 0
-
-        if cuda_avail and vram >= 12:
-            hint = (
-                f"GPU {torch.cuda.get_device_name(0)} detected with {vram}GB VRAM.\n"
-                f"Install llama-cpp-python with CUDA support:\n"
-                f"  $env:CMAKE_ARGS=\"-DGGML_CUDA=ON\"\n"
-                f"  pip install llama-cpp-python --force-reinstall --no-cache-dir\n\n"
-                f"Or run: python scripts/setup_qwen.py --install"
+        print("  [qwen] llama-cpp-python not found. Auto-installing...", file=sys.stderr)
+        success = auto_install_llama_cpp()
+        if not success:
+            result["error"] = (
+                "Auto-install of llama-cpp-python failed.\n"
+                "Try manually:\n"
+                "  $env:CMAKE_ARGS=\"-DGGML_CUDA=ON\"\n"
+                "  pip install llama-cpp-python --force-reinstall --no-cache-dir"
             )
-        elif cuda_avail and vram >= 6:
-            hint = (
-                f"GPU detected with {vram}GB VRAM. Can run Qwen 7B GGUF.\n"
-                f"Install with:\n"
-                f"  pip install llama-cpp-python\n"
-                f"For GPU acceleration:\n"
-                f"  $env:CMAKE_ARGS=\"-DGGML_CUDA=ON\"\n"
-                f"  pip install llama-cpp-python --force-reinstall --no-cache-dir"
-            )
-        elif vram > 0 and vram < 6:
-            hint = (
-                f"Only {vram}GB VRAM available. Qwen GGUF requires >=6GB VRAM (7B) or >=12GB (27B).\n"
-                f"Tip: Use OCR mode instead: --mode ocr"
-            )
-        else:
-            hint = (
-                "No GPU detected. Qwen on CPU works but is slow.\n"
-                "Install with:\n"
-                "  pip install llama-cpp-python\n\n"
-                "Requires >=16GB RAM for Qwen 7B on CPU."
-            )
-
-        result["error"] = (
-            "llama-cpp-python not installed.\n\n"
-            f"{hint}\n\n"
-            "For one-click setup info:\n"
-            "  python scripts/setup_qwen.py"
-        )
-        return result
+            return result
+        from llama_cpp import Llama
 
     try:
         t0 = time.time()
@@ -386,6 +357,122 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
         result["traceback"] = traceback.format_exc()
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Auto-setup: install dependencies and download model without user intervention
+# ---------------------------------------------------------------------------
+
+def auto_install_llama_cpp():
+    """Auto-install llama-cpp-python with CUDA or CPU backend based on hardware."""
+    import subprocess, sys
+
+    # Detect CUDA
+    cuda_avail = False
+    vram = 0
+    try:
+        import torch
+        cuda_avail = torch.cuda.is_available()
+        if cuda_avail:
+            vram = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1)
+    except Exception:
+        pass
+
+    if cuda_avail and vram >= 6:
+        print(f"  [qwen] Installing llama-cpp-python with CUDA (GPU: {vram}GB VRAM)...", file=sys.stderr)
+        env = os.environ.copy()
+        env["CMAKE_ARGS"] = "-DGGML_CUDA=ON"
+        # Try pre-built CUDA wheel first (fast), fall back to source build
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "llama-cpp-python",
+                 "--extra-index-url", "https://abetlen.github.io/llama-cpp-python/whl/cu124"],
+                env=env, capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                print("  [qwen] llama-cpp-python installed with CUDA (pre-built wheel).", file=sys.stderr)
+                return True
+        except Exception:
+            pass
+        # Fallback: source build
+        print("  [qwen] Pre-built wheel not found. Compiling from source (may take 10-15 min)...", file=sys.stderr)
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "llama-cpp-python",
+                 "--force-reinstall", "--no-cache-dir"],
+                env=env, capture_output=True, text=True, timeout=900
+            )
+            if result.returncode == 0:
+                print("  [qwen] llama-cpp-python compiled with CUDA successfully.", file=sys.stderr)
+                return True
+            print(f"  [qwen] Source build failed: {result.stderr[-300:]}", file=sys.stderr)
+            return False
+        except subprocess.TimeoutExpired:
+            print("  [qwen] Source build timed out after 15 minutes.", file=sys.stderr)
+            return False
+    else:
+        print("  [qwen] Installing llama-cpp-python (CPU version)...", file=sys.stderr)
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "llama-cpp-python"],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                print("  [qwen] llama-cpp-python installed (CPU).", file=sys.stderr)
+                return True
+            return False
+        except Exception as e:
+            print(f"  [qwen] Install failed: {e}", file=sys.stderr)
+            return False
+
+
+def auto_download_model(model_dir=None):
+    """Auto-download Qwen3.5-27B GGUF model from HuggingFace.
+
+    Returns the model directory path if successful, None otherwise.
+    """
+    # Determine target directory
+    if model_dir and os.path.isdir(model_dir):
+        target = model_dir
+    else:
+        env_dir = os.environ.get("QWEN_MODEL_PATH")
+        if env_dir and os.path.isdir(env_dir):
+            target = env_dir
+        else:
+            # Default: create alongside skill
+            target = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "Qwen3.5-27B")
+
+    os.makedirs(target, exist_ok=True)
+
+    try:
+        from huggingface_hub import hf_hub_download, HfApi
+    except ImportError:
+        print("  [qwen] huggingface_hub not available. Installing...", file=sys.stderr)
+        import subprocess, sys
+        subprocess.run([sys.executable, "-m", "pip", "install", "huggingface_hub"], capture_output=True)
+        try:
+            from huggingface_hub import hf_hub_download, HfApi
+        except ImportError:
+            return None
+
+    repo = "unsloth/Qwen3.5-27B-GGUF"
+    files_to_download = ["mmproj-F16.gguf", "Qwen3.5-27B-Q4_K_M.gguf"]
+
+    for fname in files_to_download:
+        dest = os.path.join(target, fname)
+        if os.path.exists(dest) and os.path.getsize(dest) > 100_000_000:
+            print(f"  [qwen] {fname} already exists, skipping.", file=sys.stderr)
+            continue
+        print(f"  [qwen] Downloading {fname}...", file=sys.stderr)
+        try:
+            hf_hub_download(repo, fname, local_dir=target, local_dir_use_symlinks=False)
+            print(f"  [qwen] {fname} downloaded.", file=sys.stderr)
+        except Exception as e:
+            print(f"  [qwen] Download failed for {fname}: {e}", file=sys.stderr)
+            return None
+
+    print(f"  [qwen] Model ready at: {target}", file=sys.stderr)
+    return target
 
 
 if __name__ == "__main__":

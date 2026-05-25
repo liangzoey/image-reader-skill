@@ -61,7 +61,8 @@ llama-cpp-python is checked for Qwen mode; if missing, recommends running `setup
 ### `scripts/qwen_analyze.py`
 - Qwen GGUF model support (7B/14B/27B/32B/72B) via llama-cpp-python
 - Tested with Qwen3.5-27B from unsloth (GGUF Q4_K_M ~16.7GB)
-- Hardware-aware error messages: auto-detects GPU/VRAM and gives tailored install commands
+- **Auto-install**: if llama-cpp-python is missing, auto-detects CUDA/CPU and installs
+- **Auto-download**: if no GGUF model found, downloads Qwen3.5-27B from HuggingFace
 - Image analysis with detailed description
 - Video analysis: frame extraction (OpenCV) + frame-by-frame VLM + summary
 - Auto-picks best model size for available VRAM
