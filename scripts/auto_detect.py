@@ -68,6 +68,7 @@ def detect(model_path_hint=None):
         "vram_free_gb": None,
         "ram_total_gb": None,
         "cuda_available": False,
+        "llama_cpp_installed": False,
         "recommended_mode": "ocr",
         "recommended_model": None,
         "recommendation": None,
@@ -104,6 +105,13 @@ def detect(model_path_hint=None):
     except Exception:
         pass
 
+    # Check llama-cpp-python
+    try:
+        import llama_cpp
+        info["llama_cpp_installed"] = True
+    except ImportError:
+        info["llama_cpp_installed"] = False
+
     # Check for Qwen GGUF model
     qwen = find_qwen_gguf(model_path_hint)
     info["qwen_available"] = qwen["found"]
@@ -119,7 +127,19 @@ def detect(model_path_hint=None):
     # Qwen gets priority if GGUF model is available (it's local and handles video)
     if info["qwen_available"]:
         largest = qwen.get("largest_size", 0)
-        if largest >= 25 and vram >= 12:
+        if not info["llama_cpp_installed"]:
+            # Model found but dependency missing
+            info["recommended_mode"] = "ocr"
+            info["recommendation"] = (
+                f"Qwen GGUF found ({largest}B), but llama-cpp-python not installed.\n"
+                f"Run: python scripts/setup_qwen.py"
+            )
+        elif not info["cuda_available"] and ram >= 16:
+            info["recommended_mode"] = "qwen"
+            info["recommended_model"] = f"{largest}b_cpu"
+            info["recommendation"] = f"Qwen on CPU (GGUF, {ram}GB RAM) — supports images + video (slow)"
+            info["video_support"] = True
+        elif largest >= 25 and vram >= 12:
             info["recommended_mode"] = "qwen"
             info["recommended_model"] = f"{largest}b"
             info["recommendation"] = f"Qwen3.5-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"

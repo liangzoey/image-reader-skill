@@ -41,6 +41,7 @@ Auto-detects hardware and runs the best available mode.
 | No GPU, >=16GB RAM (no Qwen GGUF) | Janus-Pro-1B on CPU |
 
 Model cache is checked before loading. If not cached, returns a download command instead of hanging.
+llama-cpp-python is checked for Qwen mode; if missing, recommends running `setup_qwen.py`.
 
 ## Scripts
 
@@ -60,6 +61,7 @@ Model cache is checked before loading. If not cached, returns a download command
 ### `scripts/qwen_analyze.py`
 - Qwen GGUF model support (7B/14B/27B/32B/72B) via llama-cpp-python
 - Tested with Qwen3.5-27B from unsloth (GGUF Q4_K_M ~16.7GB)
+- Hardware-aware error messages: auto-detects GPU/VRAM and gives tailored install commands
 - Image analysis with detailed description
 - Video analysis: frame extraction (OpenCV) + frame-by-frame VLM + summary
 - Auto-picks best model size for available VRAM
@@ -82,19 +84,46 @@ Model cache is checked before loading. If not cached, returns a download command
 
 ### `scripts/auto_detect.py`
 - Standalone hardware info tool
-- Outputs GPU name, VRAM, RAM, Qwen GGUF status, and recommended mode
+- Outputs GPU name, VRAM, RAM, Qwen GGUF status, llama-cpp-python status, and recommended mode
+
+### `scripts/setup_qwen.py`
+- One-click hardware check and setup for Qwen GGUF mode
+- `python setup_qwen.py` : show hardware info and setup instructions
+- `python setup_qwen.py --check` : check-only (exit 0 if compatible, 1 if not)
+- `python setup_qwen.py --install` : auto-detect and install llama-cpp-python
+- Detects CUDA vs CPU and gives tailored install commands
+- Checks VRAM against model size requirements before recommending
 
 ### `janus/` (cloned Janus-Pro source)
 Used by janus_analyze.py for model inference.
 
 ## Qwen GGUF Setup (for Video Support)
 
+### Auto-Setup (Recommended)
+
+```powershell
+# Check hardware compatibility and get setup instructions
+python scripts/setup_qwen.py
+
+# Auto-install llama-cpp-python with correct backend (CUDA or CPU)
+python scripts/setup_qwen.py --install
+```
+
+The script detects your GPU, VRAM, and RAM, then:
+- Recommends the best model size for your hardware
+- Gives the correct install command (CUDA or CPU)
+- Warns if hardware is insufficient
+
+### Manual Setup
+
 1. Install llama-cpp-python:
 ```powershell
-pip install llama-cpp-python
-# For CUDA support:
+# For GPU (CUDA) — recommended if you have an NVIDIA GPU
 $env:CMAKE_ARGS="-DGGML_CUDA=ON"
 pip install llama-cpp-python --force-reinstall --no-cache-dir
+
+# For CPU only
+pip install llama-cpp-python
 ```
 
 2. Download Qwen GGUF model files from HuggingFace (e.g., unsloth/Qwen3.5-27B-GGUF):

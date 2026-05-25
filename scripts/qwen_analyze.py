@@ -233,17 +233,54 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
             return result
         result["video_info"] = video_info
 
-    # Load model
+    # Check dependencies with hardware-aware guidance
     try:
         from llama_cpp import Llama
     except ImportError:
+        # Auto-detect hardware for tailored install instructions
+        try:
+            import torch
+            cuda_avail = torch.cuda.is_available()
+            vram = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if cuda_avail else 0
+        except Exception:
+            cuda_avail = False
+            vram = 0
+
+        if cuda_avail and vram >= 12:
+            hint = (
+                f"GPU {torch.cuda.get_device_name(0)} detected with {vram}GB VRAM.\n"
+                f"Install llama-cpp-python with CUDA support:\n"
+                f"  $env:CMAKE_ARGS=\"-DGGML_CUDA=ON\"\n"
+                f"  pip install llama-cpp-python --force-reinstall --no-cache-dir\n\n"
+                f"Or run: python scripts/setup_qwen.py --install"
+            )
+        elif cuda_avail and vram >= 6:
+            hint = (
+                f"GPU detected with {vram}GB VRAM. Can run Qwen 7B GGUF.\n"
+                f"Install with:\n"
+                f"  pip install llama-cpp-python\n"
+                f"For GPU acceleration:\n"
+                f"  $env:CMAKE_ARGS=\"-DGGML_CUDA=ON\"\n"
+                f"  pip install llama-cpp-python --force-reinstall --no-cache-dir"
+            )
+        elif vram > 0 and vram < 6:
+            hint = (
+                f"Only {vram}GB VRAM available. Qwen GGUF requires >=6GB VRAM (7B) or >=12GB (27B).\n"
+                f"Tip: Use OCR mode instead: --mode ocr"
+            )
+        else:
+            hint = (
+                "No GPU detected. Qwen on CPU works but is slow.\n"
+                "Install with:\n"
+                "  pip install llama-cpp-python\n\n"
+                "Requires >=16GB RAM for Qwen 7B on CPU."
+            )
+
         result["error"] = (
-            "llama-cpp-python not installed.\n"
-            "Install with:\n"
-            "  pip install llama-cpp-python\n\n"
-            "For CUDA support:\n"
-            "  set CMAKE_ARGS=-DGGML_CUDA=ON\n"
-            "  pip install llama-cpp-python --force-reinstall --no-cache-dir"
+            "llama-cpp-python not installed.\n\n"
+            f"{hint}\n\n"
+            "For one-click setup info:\n"
+            "  python scripts/setup_qwen.py"
         )
         return result
 
