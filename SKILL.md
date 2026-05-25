@@ -30,9 +30,10 @@ Auto-detects hardware and runs the best available mode.
 
 | Condition | Mode |
 |-----------|------|
-| Qwen GGUF model found + >=20GB VRAM | Qwen2.5-VL-72B (GGUF) — images + video |
-| Qwen GGUF model found + >=6GB VRAM | Qwen2.5-VL-7B (GGUF) — images + video |
-| Qwen GGUF model found + >=16GB RAM (no GPU) | Qwen2.5-VL-7B on CPU (GGUF) |
+| Qwen GGUF found (32B/27B) + >=12GB VRAM | Qwen2.5-VL-32B (GGUF) — images + video |
+| Qwen GGUF found (14B) + >=8GB VRAM | Qwen2.5-VL-14B (GGUF) — images + video |
+| Qwen GGUF found (7B/8B) + >=6GB VRAM | Qwen2.5-VL-7B (GGUF) — images + video |
+| Qwen GGUF found + >=16GB RAM (no GPU) | Qwen on CPU (GGUF) — images + video |
 | >=14GB VRAM (no Qwen GGUF) | Janus-Pro-7B (FP16) |
 | >=8GB VRAM (no Qwen GGUF) | Janus-Pro-7B (4-bit) or 1B fallback |
 | >=4GB VRAM (no Qwen GGUF) | Janus-Pro-1B |
@@ -57,10 +58,11 @@ Model cache is checked before loading. If not cached, returns a download command
   - `--video-max-frames 30` : max frames to process
 
 ### `scripts/qwen_analyze.py`
-- Qwen2.5-VL-7B/72B GGUF model support (via llama-cpp-python)
+- Qwen2.5-VL GGUF model support (7B/14B/32B/72B) via llama-cpp-python
 - Image analysis with detailed description
 - Video analysis: frame extraction (OpenCV) + frame-by-frame VLM + summary
-- `--use-small` : prefer 7B over 72B
+- Auto-picks best model size for available VRAM
+- `--use-small` : prefer smallest model (e.g., 7B over 32B)
 - `--model-path <dir>` : GGUF model directory
 - `--video` : video mode
 - Environment: `QWEN_MODEL_PATH`, `QWEN_GPU_LAYERS` (default: -1 = all), `QWEN_CTX_SIZE`
@@ -95,8 +97,7 @@ pip install llama-cpp-python --force-reinstall --no-cache-dir
 ```
 
 2. Download Qwen2.5-VL GGUF model files from HuggingFace (e.g., bartowski):
-   - Qwen2.5-VL-7B: main GGUF + mmproj GGUF
-   - Qwen2.5-VL-72B: main GGUF + mmproj GGUF
+   - Any size: 7B, 14B, 32B, 72B — each needs main GGUF + mmproj GGUF
 
 3. Set env var or use `--qwen-model-path`:
 ```

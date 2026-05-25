@@ -18,30 +18,64 @@ logging.getLogger().setLevel(logging.ERROR)
 warnings.filterwarnings("ignore")
 
 
-MODEL_SIZES = {
-    "7b": {
-        "gguf_pattern": "*7B*gguf",
-        "mmproj_pattern": "*7B*mmproj*gguf",
-        "min_vram": 6,
-    },
-    "72b": {
-        "gguf_pattern": "*72B*gguf",
-        "mmproj_pattern": "*72B*mmproj*gguf",
-        "min_vram": 20,
-    },
-}
+# Minimum VRAM thresholds for different model size ranges (GB)
+MODEL_VRAM_THRESHOLDS = [
+    (70, 20.0),   # 70B+ range (72B, 70B)
+    (30, 12.0),   # 30B+ range (32B, 35B, 27B)
+    (13, 8.0),    # 13B+ range (14B)
+    (6, 6.0),     # 6B+ range (7B, 8B)
+    (0, 4.0),     # anything smaller
+]
 
 
-def find_gguf_files(model_dir, pattern):
-    """Find GGUF files in a directory matching a pattern."""
+def parse_model_size(label):
+    """Extract approximate parameter count from a model label string."""
+    import re
+    sizes = re.findall(r'(\d+)\s*[bB]', label)
+    if sizes:
+        return int(sizes[0])
+    return 0
+
+
+def find_qwen_gguf_files(model_dir):
+    """Find all GGUF + mmproj pairs in a directory.
+
+    Returns sorted list of (model_path, mmproj_path, size_label).
+    """
     import glob
-    files = glob.glob(os.path.join(model_dir, pattern))
-    files.extend(glob.glob(os.path.join(model_dir, "**", pattern), recursive=True))
-    return sorted(files)
+    all_gguf = glob.glob(os.path.join(model_dir, "*.gguf"))
+    all_gguf.extend(glob.glob(os.path.join(model_dir, "**", "*.gguf"), recursive=True))
+    all_gguf = sorted(set(all_gguf))
+
+    mmprojs = [m for m in all_gguf if "mmproj" in os.path.basename(m).lower()]
+    models = [m for m in all_gguf if "mmproj" not in os.path.basename(m).lower()]
+
+    results = []
+    for model_path in models:
+        label = os.path.basename(model_path)
+        # Find matching mmproj (same size prefix)
+        model_base = os.path.splitext(os.path.basename(model_path))[0].lower()
+        matched_mmproj = None
+        for mp in mmprojs:
+            mp_base = os.path.splitext(os.path.basename(mp))[0].lower()
+            # Match by shared prefix numbers (e.g., "7B" in both names)
+            import re
+            model_nums = set(re.findall(r'(\d+)[bB]', model_base))
+            mp_nums = set(re.findall(r'(\d+)[bB]', mp_base))
+            if model_nums & mp_nums:
+                matched_mmproj = mp
+                break
+        if matched_mmproj:
+            size_b = parse_model_size(label)
+            results.append((model_path, matched_mmproj, label, size_b))
+
+    # Sort by model size descending (largest model first)
+    results.sort(key=lambda x: x[3], reverse=True)
+    return results
 
 
-def find_qwen_model(model_dir=None, prefer_small=False):
-    """Find Qwen GGUF model files in the given directory.
+def pick_best_model(model_dir=None, prefer_small=False, vram_gb=0):
+    """Find Qwen GGUF model files, picking the best fit for hardware.
 
     Returns (model_path, mmproj_path, model_label) or (None, None, None).
     """
@@ -52,19 +86,35 @@ def find_qwen_model(model_dir=None, prefer_small=False):
     if env_dir and os.path.isdir(env_dir):
         search_dirs.append(env_dir)
 
-    # Try model sizes: prefer 7b for small/limited VRAM, 72b otherwise
-    sizes = ["7b", "72b"] if prefer_small else ["72b", "7b"]
-
+    all_models = []
     for d in search_dirs:
-        for size_key in sizes:
-            cfg = MODEL_SIZES[size_key]
-            models = find_gguf_files(d, cfg["gguf_pattern"])
-            mmprojs = find_gguf_files(d, cfg["mmproj_pattern"])
-            # Filter out mmproj from models list
-            models = [m for m in models if "mmproj" not in os.path.basename(m).lower()]
-            if models and mmprojs:
-                return models[0], mmprojs[0], f"Qwen2.5-VL-{size_key.upper()}"
-    return None, None, None
+        all_models.extend(find_qwen_gguf_files(d))
+
+    if not all_models:
+        return None, None, None
+
+    if prefer_small:
+        # Pick smallest model
+        chosen = all_models[-1]
+    else:
+        # Pick largest model that fits in VRAM
+        chosen = None
+        for m in all_models:
+            size_b = m[3]
+            min_vram = 4.0
+            for size_threshold, vram_req in MODEL_VRAM_THRESHOLDS:
+                if size_b >= size_threshold:
+                    min_vram = vram_req
+                    break
+            if vram_gb >= min_vram or chosen is None:
+                chosen = m
+                if vram_gb >= min_vram:
+                    break  # largest fitting model
+
+        if chosen is None:
+            chosen = all_models[0]
+
+    return chosen[0], chosen[1], chosen[2]
 
 
 def extract_video_frames(video_path, fps=1.0, max_frames=30):
@@ -117,7 +167,7 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
         media_path: Path to image or video file
         prompt: Optional text prompt
         model_dir: Directory containing Qwen GGUF files
-        use_small: Prefer 7B model over 72B
+        use_small: Prefer smallest available model (e.g., 7B over 32B/72B)
         is_video: Treat input as video
         video_fps: Frames per second to extract for video
         video_max_frames: Maximum frames to process
@@ -134,16 +184,22 @@ def analyze_media(media_path, prompt=None, model_dir=None, use_small=False, is_v
         "frame_analyses": None,
     }
 
-    # Find model
-    model_path, mmproj_path, model_label = find_qwen_model(model_dir, prefer_small=use_small)
+    # Find model with VRAM-aware selection
+    try:
+        import torch
+        vram_gb = round(torch.cuda.get_device_properties(0).total_memory / 1e9, 1) if torch.cuda.is_available() else 0
+    except Exception:
+        vram_gb = 0
+
+    model_path, mmproj_path, model_label = pick_best_model(model_dir, prefer_small=use_small, vram_gb=vram_gb)
     if not model_path:
         result["error"] = (
-            "No Qwen2.5-VL GGUF model found.\n"
+            "No Qwen GGUF model found.\n"
             "Set QWEN_MODEL_PATH or use --model-path with a directory containing:\n"
-            "  - Qwen2.5-VL-7B GGUF files (e.g., *qwen2.5-vl-7b*q4_k_m.gguf)\n"
-            "  - Qwen2.5-VL-7B mmproj file (e.g., *qwen2.5-vl-7b*mmproj*.gguf)\n\n"
+            "  - Main GGUF model file (e.g., *qwen*.gguf)\n"
+            "  - Multimodal projection file (e.g., *mmproj*.gguf)\n\n"
             "Download from: https://huggingface.co/bartowski\n\n"
-            "Or for the 72B model, use --model-path with the 72B GGUF files."
+            "Supports all Qwen2.5-VL sizes (7B, 14B, 32B, 72B) in GGUF format."
         )
         return result
 

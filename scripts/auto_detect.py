@@ -9,7 +9,12 @@ Usage:
 import sys, json, os, glob
 
 def find_qwen_gguf(model_dir=None):
-    """Check if Qwen GGUF model files exist in the given path or QWEN_MODEL_PATH."""
+    """Check if Qwen GGUF model files exist in the given path or QWEN_MODEL_PATH.
+
+    Returns info dict with found models, their sizes, and paths.
+    Uses flexible pattern matching to support any model size (7B, 14B, 32B, 72B, etc.).
+    """
+    import re
     search_dirs = []
     if model_dir and os.path.isdir(model_dir):
         search_dirs.append(model_dir)
@@ -18,22 +23,33 @@ def find_qwen_gguf(model_dir=None):
         search_dirs.append(env_dir)
 
     for d in search_dirs:
-        models = glob.glob(os.path.join(d, "*.gguf"))
-        mmprojs = [m for m in models if "mmproj" in os.path.basename(m).lower()]
-        main_models = [m for m in models if "mmproj" not in os.path.basename(m).lower()]
+        all_gguf = glob.glob(os.path.join(d, "*.gguf"))
+        all_gguf.extend(glob.glob(os.path.join(d, "**", "*.gguf"), recursive=True))
+        all_gguf = sorted(set(all_gguf))
+
+        mmprojs = {os.path.splitext(os.path.basename(m))[0].lower(): m for m in all_gguf
+                   if "mmproj" in os.path.basename(m).lower()}
+        main_models = [m for m in all_gguf if "mmproj" not in os.path.basename(m).lower()]
+
         if main_models and mmprojs:
-            sizes = []
+            found_models = []
             for m in main_models:
                 name = os.path.basename(m).lower()
-                if "72b" in name:
-                    sizes.append("72b")
-                elif "7b" in name:
-                    sizes.append("7b")
+                # Extract model size number (e.g., "7", "14", "32", "72" from patterns like "7B", "14B", "32B")
+                size_match = re.search(r'(\d+)\s*b', name)
+                size_label = f"{size_match.group(1)}B" if size_match else "unknown"
+                found_models.append({
+                    "file": os.path.basename(m),
+                    "size": size_label,
+                    "size_gb": int(size_match.group(1)) if size_match else 0,
+                })
+
             return {
                 "found": True,
                 "path": d,
-                "models": [os.path.basename(m) for m in main_models],
-                "sizes": sorted(set(sizes)),
+                "models": found_models,
+                "sizes": sorted(set(m["size"] for m in found_models)),
+                "largest_size": max((m["size_gb"] for m in found_models), default=0),
             }
     return {"found": False}
 
@@ -102,19 +118,23 @@ def detect(model_path_hint=None):
 
     # Qwen gets priority if GGUF model is available (it's local and handles video)
     if info["qwen_available"]:
-        sizes = qwen.get("sizes", [])
-        if "72b" in sizes and vram >= 20:
+        largest = qwen.get("largest_size", 0)
+        if largest >= 30 and vram >= 12:
             info["recommended_mode"] = "qwen"
-            info["recommended_model"] = "72b"
-            info["recommendation"] = f"Qwen2.5-VL-72B (GGUF, ~{vram}GB VRAM) — supports images + video"
-        elif "7b" in sizes and vram >= 6:
+            info["recommended_model"] = f"{largest}b"
+            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+        elif largest >= 13 and vram >= 8:
             info["recommended_mode"] = "qwen"
-            info["recommended_model"] = "7b"
-            info["recommendation"] = f"Qwen2.5-VL-7B (GGUF, ~{vram}GB VRAM) — supports images + video"
-        elif "7b" in sizes and ram >= 16:
+            info["recommended_model"] = f"{largest}b"
+            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+        elif largest >= 6 and vram >= 6:
             info["recommended_mode"] = "qwen"
-            info["recommended_model"] = "7b_cpu"
-            info["recommendation"] = f"Qwen2.5-VL-7B on CPU (GGUF, {ram}GB RAM) — supports images + video"
+            info["recommended_model"] = f"{largest}b"
+            info["recommendation"] = f"Qwen2.5-VL-{largest}B (GGUF, ~{vram}GB VRAM) — supports images + video"
+        elif largest >= 6 and ram >= 16:
+            info["recommended_mode"] = "qwen"
+            info["recommended_model"] = f"{largest}b_cpu"
+            info["recommendation"] = f"Qwen2.5-VL-{largest}B on CPU (GGUF, {ram}GB RAM) — supports images + video"
         else:
             info["qwen_available"] = False
             info["qwen_info"] = None

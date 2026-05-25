@@ -17,7 +17,7 @@ Claude Code models cannot directly process images or video. This skill bridges t
 - **Structural Image Analysis** — OpenCV-based 4x4 grid analysis (brightness, contrast, edge density, dominant colors)
 - **Image Type Classification** — Heuristic classification (screenshot, document, photo, UI, etc.)
 - **Janus-Pro Integration** (optional) — DeepSeek's multimodal VLM for deep semantic image understanding
-- **Qwen2.5-VL GGUF Support** (optional) — Run Qwen2.5-VL-7B/72B via llama.cpp for both image and **video analysis**
+- **Qwen2.5-VL GGUF Support** (optional) — Run Qwen2.5-VL (7B/14B/**32B**/72B) via llama.cpp for both image and **video analysis**
 - **Video Frame Analysis** — Extracts frames from video files and analyzes them frame-by-frame with VLM
 - **No Cloud API Needed** — Everything runs locally, no data leaves your machine
 
@@ -33,7 +33,9 @@ Claude Code models cannot directly process images or video. This skill bridges t
 | Janus-Pro-7B (4-bit) | >=8GB | Yes | Any |
 | Janus-Pro-7B (FP16) | >=14GB | Yes | Any |
 | Qwen2.5-VL-7B (GGUF) | >=6GB | Yes | Any |
-| Qwen2.5-VL-72B (GGUF) | >=20GB | Yes | >=16GB |
+| Qwen2.5-VL-32B (GGUF) | >=12GB | Yes | >=16GB |
+| Qwen2.5-VL-14B (GGUF) | >=8GB | Yes | Any |
+| Qwen2.5-VL-7B (GGUF) | >=6GB | Yes | Any |
 
 Auto-detection selects the best mode on each run. If a Qwen GGUF model is found, it takes priority (supports both images and video).
 
@@ -143,7 +145,7 @@ pip install llama-cpp-python --force-reinstall --no-cache-dir
 Download from HuggingFace (e.g., [bartowski](https://huggingface.co/bartowski)):
 
 - **Qwen2.5-VL-7B**: Needs 2 files — main model GGUF + mmproj GGUF (~5GB total)
-- **Qwen2.5-VL-72B**: Needs 2 files — main model GGUF + mmproj GGUF (~45GB total)
+- **Qwen2.5-VL-7B/14B/32B/72B**: Needs 2 files — main model GGUF + mmproj GGUF
 
 Place them in a directory like `F:/models/Qwen/`.
 
@@ -189,7 +191,7 @@ Or use the packaged skill file:
 | `scripts/analyze.py` | Main entry point — auto-detects hardware, runs OCR + best VLM (Janus/Qwen) |
 | `scripts/ocr_image.py` | EasyOCR text extraction + OpenCV structural analysis |
 | `scripts/janus_analyze.py` | Janus-Pro-7B/1B deep image understanding |
-| `scripts/qwen_analyze.py` | Qwen2.5-VL-7B/72B GGUF image + video analysis |
+| `scripts/qwen_analyze.py` | Qwen2.5-VL GGUF (7B/14B/32B/72B) image + video analysis |
 | `scripts/auto_detect.py` | Hardware detection + Qwen GGUF model discovery |
 
 ---
